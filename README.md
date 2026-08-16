@@ -25,12 +25,6 @@ Two operating modes:
 - Preset sample mixtures plus a custom mixture builder
 - A ten-step guided tour that drives the controls while it explains
 
-## Note on magnetic fields
-
-A quadrupole mass filter has none. It is entirely electrostatic and RF; ions are
-separated by the stability of a driven oscillator. Magnetic separation belongs to
-sector instruments and ICR cells, not here.
-
 ## Running
 
 ```bash
