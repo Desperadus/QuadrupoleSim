@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quadrupole 3D Physics Simulator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/index.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+    <header>
+        <div class="logo-container">
+            <div class="logo-icon">Q</div>
+            <div>
+                <h1>Quadrupole 3D Physics Simulator</h1>
+                <div class="sub-title">Mass-Selective Filter &amp; RF-Only Ion Guide &bull; Mathieu Stability</div>
+            </div>
+        </div>
+        <div class="header-actions">
+            <div class="mode-switch" role="group" aria-label="Quadrupole operating mode">
+                <button class="mode-btn active" id="btn-mode-filter" data-mode="mass-selective" aria-pressed="true">
+                    <span class="mode-name">Mass Selective</span>
+                    <span class="mode-hint">DC + RF &bull; filters one m/z</span>
+                </button>
+                <button class="mode-btn" id="btn-mode-guide" data-mode="rf-only" aria-pressed="false">
+                    <span class="mode-name">RF-Only Guide</span>
+                    <span class="mode-hint">No DC &bull; transmits all</span>
+                </button>
+            </div>
+            <button class="btn btn-tour" id="btn-tour">Guided Tour</button>
+        </div>
+    </header>
+
+    <div class="app-container">
+        <main class="visual-panel">
+            <div class="canvas-container" id="p5-canvas-holder">
+                <div class="canvas-overlay-controls">
+                    <button class="btn btn-primary btn-sm" id="btn-camera-reset">Reset Camera</button>
+                    <button class="btn btn-sm" id="btn-view-axial" title="Look down the quadrupole axis">Axial View</button>
+                    <button class="btn btn-sm btn-primary" id="btn-toggle-grid">Toggle Grid</button>
+                    <button class="btn btn-sm" id="btn-toggle-field" type="button" aria-pressed="false" title="Show the oscillating RF electric field">RF Field</button>
+                    <button class="btn btn-sm btn-primary" id="btn-toggle-trails" type="button" aria-pressed="true" title="Show ion trajectory trails">Trails</button>
+                </div>
+                <div class="canvas-overlay-stats">
+                    <div class="stat-item">Mode: <span class="val" id="stat-mode">Mass Selective</span></div>
+                    <div class="stat-item">RF amplitude V: <span class="val" id="stat-rf">0 V</span></div>
+                    <div class="stat-item">DC offset U: <span class="val" id="stat-dc">0 V</span></div>
+                    <div class="stat-item">Rod potential &Phi;&#8320;: <span class="val" id="stat-phi">0 V</span></div>
+                    <div class="stat-item">Transmitted: <span class="val" id="stat-transmission">0 / 0</span></div>
+                    <div class="stat-item">RF cycles in filter: <span class="val" id="stat-cycles">0</span></div>
+                </div>
+                <div class="canvas-nav-tips">
+                    Drag to Rotate 3D &bull; Scroll to Zoom
+                </div>
+                <div class="canvas-scale-note" id="canvas-scale-note">Axial scale compressed 8&times;</div>
+                <div class="electric-field-legend" id="electric-field-legend" hidden>
+                    <span>RF electric field</span>
+                    <span class="field-strength-scale" aria-hidden="true"></span>
+                    <span class="field-strength-labels"><span>Lower</span><span>Higher</span></span>
+                    <span class="field-direction-note">Arrows show the force on a positive ion. The pattern reverses every half RF cycle.</span>
+                </div>
+                <div class="rf-phase-readout" id="rf-phase-readout">
+                    <span class="rf-phase-label">RF phase</span>
+                    <canvas id="canvas-rf-dial" width="120" height="46"></canvas>
+                </div>
+            </div>
+
+            <div class="bottom-controls-bar">
+                <div class="sim-controls-group">
+                    <button class="btn btn-primary" id="btn-play">Pause</button>
+                    <button class="btn" id="btn-step">Single Step</button>
+                    <button class="btn btn-danger" id="btn-reset">Reset Beam</button>
+                </div>
+
+                <div class="speed-control">
+                    <label for="input-playback">Playback</label>
+                    <div class="speed-input-wrap">
+                        <input type="number" id="input-playback" min="0.1" step="any" value="25" inputmode="decimal" aria-describedby="playback-help">
+                        <span aria-hidden="true">RF cycles/s</span>
+                    </div>
+                    <span class="speed-help" id="playback-help">Real RF is ~10&#8310; cycles/s &mdash; this is the slow-motion factor</span>
+                </div>
+
+                <div class="sim-controls-group injection-controls">
+                    <label class="sample-select-label" for="select-sample">Sample</label>
+                    <select id="select-sample" class="sample-select"></select>
+                    <span class="injection-summary" id="injection-summary" aria-live="polite"></span>
+                </div>
+            </div>
+        </main>
+
+        <aside class="sidebar-panel">
+            <div class="tab-container">
+                <div class="tab-header">
+                    <button class="tab-btn active" data-tab="tab-spectrum">Spectrum</button>
+                    <button class="tab-btn" data-tab="tab-stability">Stability</button>
+                    <button class="tab-btn" data-tab="tab-plots">Ion Plots</button>
+                    <button class="tab-btn" data-tab="tab-setup">Setup</button>
+                    <button class="tab-btn" data-tab="tab-theory">Theory</button>
+                </div>
+
+                <div class="tab-content active" id="tab-spectrum">
+                    <div class="controls-card">
+                        <div class="card-title">
+                            <span>Mass Scan</span>
+                            <span class="card-note" id="scan-mode-note">DC and RF ramped together</span>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-col">
+                                <label class="control-label" for="input-scan-min">Scan from m/z</label>
+                                <input type="number" id="input-scan-min" min="1" step="1" value="250">
+                            </div>
+                            <div class="form-col">
+                                <label class="control-label" for="input-scan-max">Scan to m/z</label>
+                                <input type="number" id="input-scan-max" min="2" step="1" value="550">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-col">
+                                <label class="control-label" for="input-scan-steps">Scan points</label>
+                                <input type="number" id="input-scan-steps" min="20" max="2000" step="10" value="320">
+                            </div>
+                            <div class="form-col">
+                                <label class="control-label" for="input-scan-shots">Ions per point</label>
+                                <input type="number" id="input-scan-shots" min="1" max="200" step="1" value="8">
+                            </div>
+                        </div>
+                        <label class="inline-check" title="Ions whose Mathieu q lies far outside the stability window cannot reach the detector, so they are not flown. Disable to fly every ion at every setpoint.">
+                            <input type="checkbox" id="check-fast-scan" checked>
+                            <span>Skip ions far outside the stability window</span>
+                        </label>
+                        <div class="btn-row">
+                            <button class="btn btn-primary" id="btn-scan">Acquire Spectrum</button>
+                            <button class="btn" id="btn-scan-stop" disabled>Stop</button>
+                        </div>
+                        <div class="scan-progress" id="scan-progress" aria-live="polite">Ready</div>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">
+                            <span>Mass Spectrum</span>
+                            <span class="card-note">Flown, not calculated</span>
+                        </div>
+                        <div class="plot-container">
+                            <div class="plot-label-y">Transmitted intensity</div>
+                            <div class="plot-label-x">m/z setpoint</div>
+                            <canvas class="plot-canvas" id="canvas-mass-spec"></canvas>
+                        </div>
+                        <div class="spectrum-hint">
+                            Every point is a real ion packet flown through the rods at that DC/RF setpoint
+                        </div>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">Measured Peaks</div>
+                        <div class="peak-table" id="peak-table">
+                            <div class="peak-empty">No spectrum acquired yet.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tab-stability">
+                    <div class="controls-card">
+                        <div class="card-title">
+                            <span>Mathieu Stability Diagram</span>
+                            <span class="card-note" id="stability-apex-note"></span>
+                        </div>
+                        <div class="plot-container" style="height: 260px;">
+                            <div class="plot-label-y">a (DC parameter)</div>
+                            <div class="plot-label-x">q (RF parameter)</div>
+                            <canvas class="plot-canvas" id="canvas-stability"></canvas>
+                        </div>
+                        <div class="stability-legend">
+                            <span><i class="swatch swatch-both"></i>Stable in x <em>and</em> y</span>
+                            <span><i class="swatch swatch-x"></i>x only</span>
+                            <span><i class="swatch swatch-y"></i>y only</span>
+                            <span><i class="swatch swatch-line"></i>Operating line</span>
+                        </div>
+                        <div class="spectrum-hint">
+                            Click inside the diagram to move the operating line and re-tune the filter
+                        </div>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">Operating Point</div>
+                        <div class="inspector-grid">
+                            <div class="inspector-item">
+                                <span class="lbl">a of target m/z</span>
+                                <span class="val highlight" id="stability-a">0.000</span>
+                            </div>
+                            <div class="inspector-item">
+                                <span class="lbl">q of target m/z</span>
+                                <span class="val highlight" id="stability-q">0.000</span>
+                            </div>
+                            <div class="inspector-item">
+                                <span class="lbl">Operating line a/q</span>
+                                <span class="val" id="stability-ratio">0.000</span>
+                            </div>
+                            <div class="inspector-item">
+                                <span class="lbl">Ideal &Delta;m (FWHM)</span>
+                                <span class="val" id="stability-window">&mdash;</span>
+                            </div>
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label">DC/RF ratio: <span class="value" id="lbl-dcrf">98.0% of apex</span></div>
+                            <input type="range" id="slider-dcrf" min="0" max="99.95" step="0.05" value="98">
+                        </div>
+                        <div class="hint-text">
+                            Push the operating line towards the apex for higher resolution and lower transmission. At 100% the stable window closes completely and nothing gets through.
+                        </div>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">Ions in the Diagram</div>
+                        <div class="species-legend" id="species-legend"></div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tab-plots">
+                    <div class="controls-card">
+                        <div class="card-title">Select Ion for Inspection</div>
+                        <select id="select-inspect-ion"></select>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">Transverse Displacement vs Time</div>
+                        <div class="plot-container" style="height: 220px;">
+                            <div class="plot-label-y">Displacement (mm)</div>
+                            <div class="plot-label-x">Time of flight (&mu;s)</div>
+                            <canvas class="plot-canvas" id="canvas-ion-axes"></canvas>
+                        </div>
+                        <div class="axis-legend">
+                            <span style="color:var(--accent-red)">x (rods at +&Phi;&#8320;)</span> &bull;
+                            <span style="color:var(--accent-cyan)">y (rods at &minus;&Phi;&#8320;)</span> &bull;
+                            <span style="color:var(--text-dim)">rod boundary &plusmn;r&#8320;</span>
+                        </div>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">Selected Ion Inspector</div>
+                        <div class="inspector-grid">
+                            <div class="inspector-item">
+                                <span class="lbl">m/z</span>
+                                <span class="val highlight" id="inspect-mz">&mdash;</span>
+                            </div>
+                            <div class="inspector-item">
+                                <span class="lbl">State</span>
+                                <span class="val" id="inspect-status">&mdash;</span>
+                            </div>
+                            <div class="inspector-item">
+                                <span class="lbl">Mathieu (a, q)</span>
+                                <span class="val" id="inspect-aq">&mdash;</span>
+                            </div>
+                            <div class="inspector-item">
+                                <span class="lbl">Position (x, y, z) mm</span>
+                                <span class="val" id="inspect-pos">&mdash;</span>
+                            </div>
+                            <div class="inspector-item">
+                                <span class="lbl">Axial speed</span>
+                                <span class="val" id="inspect-vz">&mdash;</span>
+                            </div>
+                            <div class="inspector-item">
+                                <span class="lbl">RF cycles elapsed</span>
+                                <span class="val" id="inspect-cycles">&mdash;</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tab-setup">
+                    <div class="controls-card">
+                        <div class="card-title">Filter Tuning</div>
+                        <div class="control-group" id="group-target-mz">
+                            <div class="control-label">Target m/z: <span class="value" id="lbl-target-mz">500</span></div>
+                            <input type="range" id="slider-target-mz" min="10" max="1200" step="1" value="500">
+                            <input type="number" id="input-target-mz" min="1" max="4000" step="0.1" value="500">
+                        </div>
+                        <div class="control-group" id="group-cutoff-mz" hidden>
+                            <div class="control-label">Low-mass cutoff m/z: <span class="value" id="lbl-cutoff-mz">100</span></div>
+                            <input type="range" id="slider-cutoff-mz" min="5" max="1000" step="1" value="100">
+                            <div class="hint-text">In RF-only mode the DC is zero, so everything above this m/z is transmitted and everything below is ejected.</div>
+                        </div>
+                        <div class="control-group" id="group-dcrf-setup">
+                            <div class="control-label">DC/RF ratio: <span class="value" id="lbl-dcrf-setup">98.0% of apex</span></div>
+                            <input type="range" id="slider-dcrf-setup" min="0" max="99.95" step="0.05" value="98">
+                        </div>
+                        <div class="derived-grid">
+                            <div><span class="lbl">RF amplitude V</span><span class="val" id="derived-v">&mdash;</span></div>
+                            <div><span class="lbl">DC offset U</span><span class="val" id="derived-u">&mdash;</span></div>
+                            <div><span class="lbl">Ideal &Delta;m</span><span class="val" id="derived-dm">&mdash;</span></div>
+                            <div><span class="lbl">Ideal R = m/&Delta;m</span><span class="val" id="derived-r">&mdash;</span></div>
+                        </div>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">Quadrupole Geometry</div>
+                        <div class="control-group">
+                            <div class="control-label">Rod profile</div>
+                            <div class="segmented" role="group" aria-label="Rod profile">
+                                <button class="seg-btn active" data-geometry="hyperbolic">Hyperbolic (ideal)</button>
+                                <button class="seg-btn" data-geometry="round">Round rods</button>
+                            </div>
+                        </div>
+                        <div class="control-group" id="group-rod-ratio" hidden>
+                            <div class="control-label">Rod radius r/r&#8320;: <span class="value" id="lbl-rod-ratio">1.1268</span></div>
+                            <input type="range" id="slider-rod-ratio" min="1.02" max="1.40" step="0.0002" value="1.1268">
+                            <div class="multipole-grid" id="multipole-grid"></div>
+                            <div class="hint-text">
+                                Round rods cannot make a pure quadrupole field. The harmonics above are solved from the actual rod boundary, so you can hunt for the ratio that cancels the 12-pole term A&#8326;.
+                            </div>
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label">Field radius r&#8320;: <span class="value" id="lbl-r0">4.0 mm</span></div>
+                            <input type="range" id="slider-r0" min="1.5" max="10" step="0.1" value="4">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label">Rod length: <span class="value" id="lbl-length">200 mm</span></div>
+                            <input type="range" id="slider-length" min="30" max="400" step="5" value="200">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label">RF frequency: <span class="value" id="lbl-frequency">1.00 MHz</span></div>
+                            <input type="range" id="slider-frequency" min="0.2" max="4" step="0.01" value="1">
+                        </div>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">Ion Source</div>
+                        <div class="control-group">
+                            <div class="control-label">Axial ion energy: <span class="value" id="lbl-energy">5.0 eV</span></div>
+                            <input type="range" id="slider-energy" min="0.5" max="50" step="0.5" value="5">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label">Beam radius: <span class="value" id="lbl-beam">0.35 mm</span></div>
+                            <input type="range" id="slider-beam" min="0" max="3" step="0.05" value="0.35">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label">Max transverse energy: <span class="value" id="lbl-transverse">0.020 eV</span></div>
+                            <input type="range" id="slider-transverse" min="0" max="0.5" step="0.005" value="0.02">
+                        </div>
+                        <div class="toggle-container">
+                            <span class="control-label" style="font-size:12px; font-weight:600;">Random RF phase at entry</span>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="toggle-random-phase" checked>
+                                <span class="slider-toggle"></span>
+                            </label>
+                        </div>
+                        <div class="hint-text">
+                            Ions arrive continuously, so each one meets the drive at a different phase. Turning this off launches every ion at the same phase, which is not physical but makes the motion easy to read.
+                        </div>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">Fringing Fields</div>
+                        <div class="toggle-container">
+                            <span class="control-label" style="font-size:12px; font-weight:600;">Model entrance and exit fringe</span>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="toggle-fringe" checked>
+                                <span class="slider-toggle"></span>
+                            </label>
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label">Fringe length: <span class="value" id="lbl-fringe">4.0 mm</span></div>
+                            <input type="range" id="slider-fringe" min="0.5" max="30" step="0.5" value="4">
+                        </div>
+                        <div class="hint-text">
+                            Switching the fringe off gives a hard-edged field, which kicks ions that arrive at an unfavourable RF phase and costs transmission. This is why real instruments put an RF-only pre-filter in front of the analyser.
+                        </div>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">Display</div>
+                        <div class="control-group">
+                            <div class="control-label">Live ions in beam: <span class="value" id="lbl-ion-count">24</span></div>
+                            <input type="range" id="slider-ion-count" min="1" max="150" step="1" value="24">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label">Axial scale compression: <span class="value" id="lbl-aspect">8&times;</span></div>
+                            <input type="range" id="slider-aspect" min="1" max="30" step="0.5" value="8">
+                        </div>
+                        <div class="control-group">
+                            <div class="control-label">Rod opacity: <span class="value" id="lbl-rod-opacity">55%</span></div>
+                            <input type="range" id="slider-rod-opacity" min="0" max="100" step="5" value="55">
+                        </div>
+                    </div>
+
+                    <div class="controls-card">
+                        <div class="card-title">Custom Ion Mixture</div>
+                        <div class="ion-adder-form">
+                            <div class="form-row">
+                                <div class="form-col">
+                                    <label class="control-label" for="input-add-mz">m/z</label>
+                                    <input type="number" id="input-add-mz" min="1" max="4000" step="0.001" value="450">
+                                </div>
+                                <div class="form-col">
+                                    <label class="control-label" for="input-add-abundance">Abundance</label>
+                                    <input type="number" id="input-add-abundance" min="1" max="100" step="1" value="100">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-col">
+                                    <label class="control-label" for="input-add-label">Label</label>
+                                    <input type="text" id="input-add-label" placeholder="Analyte">
+                                </div>
+                            </div>
+                            <div class="btn-row">
+                                <button class="btn btn-primary btn-sm" id="btn-add-species">Add to Mixture</button>
+                                <button class="btn btn-sm btn-danger" id="btn-clear-species">Clear Custom</button>
+                            </div>
+                        </div>
+                        <div class="species-legend" id="species-editor"></div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tab-theory">
+                    <div class="theory-doc">
+                        <h3>The Oscillating Quadrupole Field</h3>
+                        <p>Four parallel rods surround the axis. One opposing pair is held at <em>+&Phi;&#8320;</em>, the other at <em>&minus;&Phi;&#8320;</em>, where the applied potential mixes a DC offset with a radio-frequency drive:</p>
+                        <div class="theory-equation">
+                            &Phi;&#8320;(t) = U &minus; V &middot; cos(&Omega;t)
+                        </div>
+                        <p>For ideal hyperbolic rods the potential inside is a pure two-dimensional saddle that has no component along the axis:</p>
+                        <div class="theory-equation">
+                            &Phi;(x, y, t) = &Phi;&#8320;(t) &middot; (x<sup>2</sup> &minus; y<sup>2</sup>) / r&#8320;<sup>2</sup>
+                        </div>
+                        <p>Because the potential is independent of <em>z</em>, an ion coasts along the axis at whatever speed the source gave it. The quadrupole never accelerates it forwards &mdash; it only decides whether it survives the trip.</p>
+
+                        <h3>Equations of Motion &rarr; Mathieu</h3>
+                        <p>Differentiating the potential gives a restoring force in one transverse direction and a repelling force in the other, swapping roles every half RF cycle:</p>
+                        <div class="theory-equation">
+                            m &middot; d<sup>2</sup>x/dt<sup>2</sup> = &minus;2Q(U &minus; V cos &Omega;t) &middot; x / r&#8320;<sup>2</sup><br>
+                            m &middot; d<sup>2</sup>y/dt<sup>2</sup> = +2Q(U &minus; V cos &Omega;t) &middot; y / r&#8320;<sup>2</sup>
+                        </div>
+                        <p>Substituting &xi; = &Omega;t/2 turns both into the <strong>Mathieu equation</strong>:</p>
+                        <div class="theory-equation">
+                            d<sup>2</sup>u/d&xi;<sup>2</sup> + (a<sub>u</sub> &minus; 2q<sub>u</sub> cos 2&xi;) u = 0
+                        </div>
+                        <div class="theory-equation">
+                            a<sub>x</sub> = 8QU / (m&Omega;<sup>2</sup>r&#8320;<sup>2</sup>) &nbsp;&nbsp;&nbsp; q<sub>x</sub> = 4QV / (m&Omega;<sup>2</sup>r&#8320;<sup>2</sup>) &nbsp;&nbsp;&nbsp; a<sub>y</sub> = &minus;a<sub>x</sub>, q<sub>y</sub> = &minus;q<sub>x</sub>
+                        </div>
+                        <p><span style="color:var(--accent-cyan); font-weight:bold;">Critical note:</span> the charge <em>Q</em> appears in the numerator and inside <em>m</em> in the denominator, so both parameters depend only on the ratio <strong>m/z</strong>. A doubly charged ion of mass 1000 behaves exactly like a singly charged ion of mass 500. That is why a quadrupole is a mass-to-charge filter and not a mass filter.</p>
+
+                        <h3>The Stability Diagram</h3>
+                        <p>The Mathieu equation has bounded solutions only for certain (a, q). An ion survives only if its motion is bounded in <strong>both</strong> x and y at once. Because a<sub>y</sub> = &minus;a<sub>x</sub>, the joint region is symmetric about a = 0 and forms the familiar triangle. This simulation finds it by Floquet analysis rather than from a table &mdash; it integrates one RF period, builds the monodromy matrix and checks |trace| &lt; 2. The apex and the RF-only cutoff below are values the program derived, not values it was given.</p>
+                        <div class="theory-equation" id="theory-apex-values"></div>
+
+                        <h3>Scanning: The Operating Line</h3>
+                        <p>Both a and q are inversely proportional to m/z, so at a fixed U and V every ion sits at a different point along the ray <em>a = (2U/V) &middot; q</em>, ordered by mass. Only the slice of that ray inside the triangle is transmitted. Ramping U and V together keeps the ray fixed and sweeps the mass scale past it &mdash; that is a mass scan.</p>
+                        <ul>
+                            <li><strong>Steeper line (U/V closer to the apex):</strong> a shorter segment inside the triangle, so a narrower &Delta;m and higher resolution &mdash; but a much smaller acceptance, so fewer ions survive. This is the fundamental resolution/transmission trade-off of every quadrupole.</li>
+                            <li><strong>Constant &Delta;m operation:</strong> because &Delta;m/m is set by the line slope, a fixed slope gives resolution proportional to mass. Real instruments adjust U/V during the scan to hold &Delta;m constant instead.</li>
+                        </ul>
+
+                        <h3>RF-Only Mode</h3>
+                        <p>Setting U = 0 puts the operating line along the q axis. Every ion is then stable up to the cutoff q where the triangle closes, which makes the device a <strong>high-pass mass filter</strong>: light ions are ejected, everything heavier is guided through. RF-only quadrupoles are used as ion guides, collision cells and pre-filters rather than as analysers.</p>
+                        <p>Ions in an RF-only guide feel a time-averaged effective potential &mdash; the <em>pseudopotential</em> &mdash; that grows with the square of the displacement from the axis, which is what confines them despite the field itself being defocusing half the time.</p>
+
+                        <h3>Real Rods Are Round</h3>
+                        <p>Hyperbolic rods are expensive to machine, so most instruments use round rods. A round-rod set cannot produce a pure quadrupole field; the potential picks up higher harmonics that the four-fold symmetry allows:</p>
+                        <div class="theory-equation">
+                            &Phi;(x, y) = &Phi;&#8320; &middot; &Sigma;<sub>n = 2, 6, 10 &hellip;</sub> A<sub>n</sub> &middot; Re[((x + iy)/r&#8320;)<sup>n</sup>]
+                        </div>
+                        <p>This simulator solves the two-dimensional boundary value problem for the actual rod surfaces with the charge simulation method and reads the harmonics off by Fourier analysis, so changing r/r&#8320; genuinely changes the field. Sweep the ratio in the Setup tab and watch the 12-pole coefficient A&#8326; pass through zero &mdash; that null is the reason a particular rod radius is chosen.</p>
+
+                        <h3>Fringing Fields</h3>
+                        <p>The field cannot switch on instantly at the entrance. In the fringe region the transverse field ramps up and, because the potential now varies with z, an axial component appears:</p>
+                        <div class="theory-equation">
+                            E<sub>z</sub> = &minus;&Phi;&#8320;(t) &middot; s&prime;(z) &middot; (x<sup>2</sup> &minus; y<sup>2</sup>) / r&#8320;<sup>2</sup>
+                        </div>
+                        <p>An ion crossing this region at an unlucky RF phase gets a transverse kick that can throw it out of the acceptance even though its (a, q) is deep inside the stable triangle. Compare transmission with the fringe on and off to see the cost.</p>
+
+                        <h3>What This Device Is Not</h3>
+                        <p>A quadrupole mass filter is entirely electrostatic and radio-frequency. There is <strong>no magnetic field</strong> anywhere in it. Magnetic analysers (sector instruments) and ion cyclotron resonance cells separate ions with a magnetic field; a quadrupole separates them purely through the stability of a driven oscillator.</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <div class="tour-overlay" id="tour-overlay" hidden>
+        <div class="tour-panel" role="dialog" aria-modal="false" aria-labelledby="tour-title">
+            <div class="tour-header">
+                <div>
+                    <div class="tour-step-count" id="tour-step-count"></div>
+                    <h2 class="tour-title" id="tour-title"></h2>
+                </div>
+                <button class="btn btn-sm" id="btn-tour-close" aria-label="Close guided tour">&times;</button>
+            </div>
+            <div class="tour-body" id="tour-body"></div>
+            <div class="tour-footer">
+                <button class="btn btn-sm" id="btn-tour-prev">Back</button>
+                <div class="tour-dots" id="tour-dots"></div>
+                <button class="btn btn-sm btn-primary" id="btn-tour-next">Next</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/main.js"></script>
+</body>
+</html>
